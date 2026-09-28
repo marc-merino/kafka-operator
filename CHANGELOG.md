@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Prefer scheduling Kafka broker Pods on nodes with OPA server Pods when OPA authorization is
+  configured.
 - Support floating tags for product images via the new `spec.image.stackableVersionPolicy` field
   ([#1021]).
 - Support Kerberos (GSSAPI) authentication on KRaft controllers, covering both
