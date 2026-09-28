@@ -2,6 +2,11 @@
 :description: The managed Kafka instances are automatically configured to export Prometheus metrics.
 
 The operator sets up all Kafka server instances with a JMX exporter agent.
+For brokers (in ZooKeeper and KRaft mode) and KRaft controllers, the operator supplies the exporter rules as `jmx-exporter.yaml` in each role-group ConfigMap.
+The existing config volume mounts this file at `/stackable/config/jmx-exporter.yaml`.
+The exporter JAR remains in the product image at `/stackable/jmx/jmx_prometheus_javaagent.jar`; the image no longer needs to supply the YAML rules.
+The metric rules are unchanged.
+
 The operator also sets up a dedicated metrics service for each role group.
 The name of this service follows the schema `<stacklet name>-<role name>-<group name>-metrics`.
 See xref:operators:monitoring.adoc[] for more details.

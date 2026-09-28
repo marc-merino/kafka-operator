@@ -10,12 +10,19 @@ if __name__ == "__main__":
         stream=sys.stdout,
     )
 
-    response = requests.get("http://test-kafka-broker-default-metrics:9606/metrics")
-
-    assert response.status_code == 200, (
-        f"Expected HTTP return code 200 from the metrics endpoint but got [{response.status_code}]"
-    )
-
-    assert "jmx_scrape_error" in response.text, (
-        "Expected metric [jmx_scrape_error] not found"
-    )
+    for role, group in [("broker", "default"), ("controller", "automatic-log-config")]:
+        response = requests.get(
+            f"http://test-kafka-{role}-{group}-metrics:9606/metrics", timeout=30
+        )
+        assert response.status_code == 200, (
+            f"Expected HTTP 200 from {role} metrics, got {response.status_code}"
+        )
+        samples = {
+            line.split()[0]: line.split()[1]
+            for line in response.text.splitlines()
+            if line and not line.startswith("#")
+        }
+        assert float(samples["jmx_scrape_error"]) == 0, f"JMX scrape failed for {role}"
+        assert any(name.startswith("kafka_") for name in samples), (
+            f"Expected Kafka metrics for {role}"
+        )

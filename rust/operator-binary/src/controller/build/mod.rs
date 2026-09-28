@@ -281,6 +281,156 @@ mod tests {
         validated_cluster(&kafka)
     }
 
+    #[rstest::rstest]
+    #[case::zookeeper(false)]
+    #[case::kraft(true)]
+    fn jmx_config_is_supplied_by_the_mounted_rolegroup_configmap(#[case] kraft: bool) {
+        let cluster = if kraft {
+            kraft_mode_cluster()
+        } else {
+            zookeeper_mode_cluster()
+        };
+        let resources = build(&cluster).expect("build succeeds");
+        assert_eq!(resources.stateful_sets.len(), if kraft { 2 } else { 1 });
+        // Only the existing role-group ConfigMaps and discovery ConfigMap are needed.
+        assert_eq!(
+            resources.config_maps.len(),
+            resources.stateful_sets.len() + 1
+        );
+
+        for sts in &resources.stateful_sets {
+            let pod = sts.spec.as_ref().unwrap().template.spec.as_ref().unwrap();
+            let kafka = pod.containers.iter().find(|c| c.name == "kafka").unwrap();
+            let extra_args = kafka
+                .env
+                .as_ref()
+                .unwrap()
+                .iter()
+                .find(|env| env.name == "EXTRA_ARGS")
+                .unwrap()
+                .value
+                .as_ref()
+                .unwrap();
+            let agent_args: Vec<_> = extra_args
+                .split_whitespace()
+                .filter(|arg| arg.starts_with("-javaagent:"))
+                .collect();
+            assert_eq!(
+                agent_args,
+                [
+                    "-javaagent:/stackable/jmx/jmx_prometheus_javaagent.jar=9606:/stackable/config/jmx-exporter.yaml"
+                ]
+            );
+            let yaml_path = agent_args[0].rsplit_once(':').unwrap().1;
+            let mount = kafka
+                .volume_mounts
+                .as_ref()
+                .unwrap()
+                .iter()
+                .find(|mount| mount.mount_path == STACKABLE_CONFIG_DIR)
+                .unwrap();
+            assert_eq!(mount.name, "config");
+            assert!(mount.sub_path.is_none());
+            let volume = pod
+                .volumes
+                .as_ref()
+                .unwrap()
+                .iter()
+                .find(|volume| volume.name == mount.name)
+                .unwrap();
+            let source = volume.config_map.as_ref().unwrap();
+            assert_eq!(Some(&source.name), sts.metadata.name.as_ref());
+            assert!(
+                source.items.is_none(),
+                "all ConfigMap keys must be projected"
+            );
+            let cm = resources
+                .config_maps
+                .iter()
+                .find(|cm| cm.metadata.name.as_ref() == Some(&source.name))
+                .unwrap();
+            let filename = yaml_path
+                .strip_prefix(&format!("{}/", mount.mount_path))
+                .unwrap();
+            let emitted = &cm.data.as_ref().unwrap()[filename];
+            assert_eq!(emitted, include_str!("properties/jmx/server.yaml"));
+            let yaml: serde_yaml::Value = serde_yaml::from_str(emitted).unwrap();
+            assert!(!yaml["rules"].as_sequence().unwrap().is_empty());
+
+            // No command, init container or environment variable may fall back to image YAML.
+            let serialized = serde_json::to_string(sts).unwrap();
+            assert!(!serialized.contains("/stackable/jmx/server.yaml"));
+            assert!(!serialized.contains("/stackable/jmx/broker.yaml"));
+        }
+    }
+
+    #[test]
+    fn jmx_agent_overrides_are_honored_by_broker_and_controller_statefulsets() {
+        let kafka = minimal_kafka(
+            r#"
+            apiVersion: kafka.stackable.tech/v1alpha1
+            kind: KafkaCluster
+            metadata:
+              name: simple-kafka
+              namespace: default
+              uid: 12345678-1234-1234-1234-123456789012
+            spec:
+              image:
+                productVersion: 3.9.2
+              clusterConfig:
+                metadataManager: kraft
+              brokers:
+                jvmArgumentOverrides:
+                  add: ["-Dexample.setting=role"]
+                roleGroups:
+                  default:
+                    replicas: 1
+                    jvmArgumentOverrides:
+                      removeRegex: ["-javaagent:.*", "-Dexample.setting=.*"]
+                      add: ["-Dexample.setting=group"]
+              controllers:
+                jvmArgumentOverrides:
+                  add: ["-Dexample.setting=role"]
+                roleGroups:
+                  default:
+                    replicas: 1
+                    jvmArgumentOverrides:
+                      removeRegex: ["-javaagent:.*", "-Dexample.setting=.*"]
+                      add: ["-Dexample.setting=group"]
+        "#,
+        );
+        let resources = build(&validated_cluster(&kafka)).unwrap();
+        assert_eq!(resources.stateful_sets.len(), 2);
+        for sts in resources.stateful_sets {
+            let pod = sts.spec.unwrap().template.spec.unwrap();
+            let kafka = pod.containers.iter().find(|c| c.name == "kafka").unwrap();
+            let env = kafka.env.as_ref().unwrap();
+            let extra_args = env
+                .iter()
+                .find(|env| env.name == "EXTRA_ARGS")
+                .unwrap()
+                .value
+                .as_ref()
+                .unwrap();
+            assert!(!extra_args.contains("-javaagent:"));
+            assert!(!extra_args.contains("-Dexample.setting=role"));
+            assert!(extra_args.contains("-Dexample.setting=group"));
+            assert!(
+                extra_args
+                    .contains("-Djava.security.properties=/stackable/config/security.properties")
+            );
+            assert!(
+                env.iter()
+                    .find(|env| env.name == "KAFKA_HEAP_OPTS")
+                    .unwrap()
+                    .value
+                    .as_ref()
+                    .unwrap()
+                    .contains("-Xmx")
+            );
+        }
+    }
+
     #[test]
     fn build_succeeds_when_every_kraft_role_group_is_scaled_to_zero() {
         let kafka = minimal_kafka(

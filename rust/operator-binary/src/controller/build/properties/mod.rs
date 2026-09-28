@@ -25,6 +25,8 @@ pub enum ConfigFileName {
     ControllerProperties,
     #[strum(serialize = "security.properties")]
     Security,
+    #[strum(serialize = "jmx-exporter.yaml")]
+    JmxExporter,
     #[strum(serialize = "client.properties")]
     Client,
     /// Client-side (unprefixed `security.protocol`/`ssl.*`) properties for an admin CLI tool

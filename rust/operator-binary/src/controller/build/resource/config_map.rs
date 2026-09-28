@@ -153,6 +153,11 @@ pub fn build_rolegroup_config_map(
                 }
             })?,
         )
+        // Brokers and KRaft controllers share the same exporter rules.
+        .add_data(
+            ConfigFileName::JmxExporter.to_string(),
+            include_str!("../properties/jmx/server.yaml"),
+        )
         .add_data(
             ConfigFileName::Security.to_string(),
             to_java_properties_string(jvm_sec_props.iter()).with_context(|_| {

@@ -14,6 +14,9 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- Manage the JMX exporter configuration in role-group ConfigMaps for brokers and KRaft
+  controllers instead of relying on YAML files in the product image, preserving the existing
+  metric rules ([stackabletech/issues#160](https://github.com/stackabletech/issues/issues/160)).
 - BREAKING: `spec.image.stackableVersion` must now be a full, valid semver version, e.g. `26.7.1`.
   Abbreviated values such as `26.7` are no longer accepted ([#1021]).
 - BREAKING: `spec.image.pullPolicy` now defaults to `IfNotPresent` for non-floating tags instead of
